@@ -2,6 +2,10 @@
 
 Slhasher is a collaborative tool designed to perform bulk SHA256 hash lookups through a graphical user interface. It integrates with VirusTotal to fetch hash metadata and supports exporting results for easy sharing and analysis.
 
+## Demo
+
+https://github.com/user-attachments/assets/bdae680f-8260-4fdb-a562-cce9aeac4886
+
 ## Features
 
 - Perform bulk SHA256 hash lookups via VirusTotal
