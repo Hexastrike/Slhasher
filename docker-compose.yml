@@ -1,0 +1,20 @@
+services:
+  slhasher_backend:
+    build: 
+      context: ./backend
+      dockerfile: Dockerfile
+    volumes:
+      - ./backend/:/usr/src/slhasher/backend
+    ports:
+      - ${SLHASHER_API_PORT}:8000
+    env_file:
+      - ./.env
+
+  slhasher_frontend:
+    build: 
+      context: ./frontend
+      dockerfile: Dockerfile
+    volumes:
+      - ./frontend/:/usr/src/slhasher/frontend
+    ports:
+      - ${SLHASHER_FRONTEND_PORT}:80
