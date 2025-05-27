@@ -1,46 +1,65 @@
-import React, { useEffect, useState } from 'react';
-import { IconContext } from "react-icons";
-import { IoMoon, IoSunny } from "react-icons/io5";
 
-function Header() {
-  // Initialize state based on localStorage value
-  const [HXDarkMode, setHXDarkMode] = useState(() => 
-    localStorage.getItem('HXTheme') === 'HXThemeDark');
+import React, { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { Search, Moon, Sun } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { useTheme } from "@/context/ThemeContext";
+import { toast } from "sonner"
 
-  useEffect(() => {
-    // Apply dark mode class on mount if HXTheme is 'HXThemeDark'
-    if (HXDarkMode) {
-      document.body.classList.add('dark');
-    } else {
-      document.body.classList.remove('dark');
+export function Header() {
+  const [searchQuery, setSearchQuery] = useState("");
+  const navigate = useNavigate();
+  const { theme, toggleTheme } = useTheme();
+
+  const handleSearch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!searchQuery.trim()) return;
+    
+    try {
+      // Redirect to the search results page with the query as a parameter
+      navigate(`/search?q=${encodeURIComponent(searchQuery.trim())}`);
+    } catch (error) {
+      console.error("Search error:", error);
+      toast.error("Search Failed: An error occurred while searching");
     }
-  }, [HXDarkMode]); // Only run when HXDarkMode changes
-
-  const handleColorTheme = () => {
-    const newTheme = HXDarkMode ? 'HXThemeLight' : 'HXThemeDark';
-    setHXDarkMode(!HXDarkMode); // Toggle the state
-    localStorage.setItem('HXTheme', newTheme); // Update localStorage
-    document.body.classList.toggle('dark'); // Toggle the class
   };
 
   return (
-    <header className='grid w-full'>
-      <div className='hx-header-theme-toggle justify-self-end'>
-        <button onClick={handleColorTheme}>
-          {
-            HXDarkMode ? 
-            <IconContext.Provider value={{ color: '#a1a1aa', className: 'text-xl' }}>
-              <IoMoon />
-            </IconContext.Provider>
-            : 
-            <IconContext.Provider value={{ className: 'text-xl' }}>
-              <IoSunny />
-            </IconContext.Provider>
-          }
-        </button>
+    <header className="sticky top-0 z-40 flex h-14 items-center px-4 md:px-6 bg-background">
+      <div className="flex flex-1 items-center justify-between">
+        <div className="flex items-center gap-2 md:gap-4">
+          <form onSubmit={handleSearch} className="ml-4">
+            <div className="relative">
+              {/* TODO: <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input 
+                placeholder="Search indicators or queries..." 
+                className="h-10 w-48 md:w-64 lg:w-80 pl-9"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              /> */}
+            </div>
+          </form>
+        </div>
+        
+        <div className="flex items-center gap-2">
+          {/* Theme toggle button */}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={toggleTheme}
+            className="rounded-full"
+          >
+            {theme === "dark" ? (
+              <Sun className="h-5 w-5" />
+            ) : (
+              <Moon className="h-5 w-5" />
+            )}
+            <span className="sr-only">Toggle theme</span>
+          </Button>
+        </div>
       </div>
     </header>
   );
 }
-
-export default Header;

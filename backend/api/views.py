@@ -1,394 +1,366 @@
 import ast
-import threading
 import csv
+import threading
+from datetime import datetime
 
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework import status
 from django.db import transaction
-from django.http import HttpResponse
+from django.http import StreamingHttpResponse
+from rest_framework import (status, exceptions)
+from rest_framework.response import Response
+from rest_framework.views import APIView
+from rest_framework.request import Request
+from rest_framework.generics import get_object_or_404
+from rest_framework.renderers import JSONRenderer
 
-from .models import SlhasherHash, SlhasherQuery, QueryHashJoin
-from .serializers import SlhasherHashSerializer, SlhasherQuerySerializer, QueryHashJoinSerializer
-
-from .lib.proc_vt import vt_proc_ha, vt_proc_df
-
-class SlhasherHashView(APIView):
-    """
-    View to retrieve all hashes and create a new hash entry.
-    """
-
-    def get(self, request):
-        hashes = SlhasherHash.objects.all()
-        serializer = SlhasherHashSerializer(hashes, many=True)
-        return Response({
-            'success': True,
-            'data': serializer.data
-        })
-
-class SlhasherHashDetailView(APIView):
-    """
-    View to retrieve hash details by hash value.
-    """
-
-    def get(self, request, hash_id):
-        try:
-            hash_obj = SlhasherHash.objects.get(pk=hash_id)
-            serializer = SlhasherHashSerializer(hash_obj)
-            return Response({
-                'success': True,
-                'data': serializer.data
-            })
-        
-        except SlhasherHash.DoesNotExist:
-            return Response({
-                'success': False,
-                'error': 'Hash not found'
-            }, status=status.HTTP_404_NOT_FOUND)
-        
-        except ValueError:
-            return Response({
-                'success': False,
-                'error': 'Failed to retrieve hash'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+from .lib.virustotal import (
+    enrich_indicators_with_vt, 
+    fetch_vt_download_url
+)
+from .models import (
+    ModelQueryDomainJoin,
+    ModelQueryHashJoin,
+    ModelQueryIPJoin,
+    ModelSlasherDomain,
+    ModelSlasherHash,
+    ModelSlasherIP,
+    ModelSlasherQuery,
+)
+from .serializers import (
+    SerializerQueryDomainJoin,
+    SerializerQueryHashJoin,
+    SerializerQueryIPJoin,
+    SerializerSlasherDomain,
+    SerializerSlasherHash,
+    SerializerSlasherIP,
+    SerializerSlasherQuery,
+    SerializersQueryEnvelope,
+)
+from .renderers import CSVRenderer
 
 
-class SlhasherQueryView(APIView):
-    """
-    View to retrieve all queries and create a new query entry.
+class ViewSlasherQueries(APIView):
+    """!
+    @brief API view to handle retrieval and creation of Slasher queries.
+
+    This view allows fetching all existing queries using the GET method and 
+    creating a new query with associated IPs, domains, and hashes using the POST method.
+    If a uuid is provided, the Slasher query details for that specific query are returned.
     """
 
-    def get(self, request):
-        queries = SlhasherQuery.objects.all()
-        serializer = SlhasherQuerySerializer(queries, many=True)
-        return Response({
-            'success': True,
-            'data': serializer.data
-        })
+    def get(self, request: Request, uuid: str = None):
+        """!
+        @brief Retrieve all or specific Slasher query results.
 
-    def post(self, request):
-        with transaction.atomic():
-            try:
-                # Extract the data from the request
-                query_details = request.data.get('query', {}) 
-                hashes = request.data.get('hashes', []) 
+        @param request: Incoming HTTP request.
+        @param uuid: The Slasher query uuid.
 
-                # Hash deduplication
-                hashes = list(set(hashes))
+        @return Response: JSON response either showing a specific query result or all available query results.
+        """
 
-                # Serialize Slhasher query
-                query_serializer = SlhasherQuerySerializer(data=query_details)
+        # If a uuid is provided, fetch the query details and related hashes, IPs and domains
+        if uuid:
+            # Attempt to retrieve the query object by its uuid
+            # If the query does not exist, this will raise a ModelSlasherQuery.DoesNotExist exception
+            query = get_object_or_404(ModelSlasherQuery, uuid=uuid)
+            query_serializer = SerializerSlasherQuery(query)
 
-                if query_serializer.is_valid():
-                    query = query_serializer.save()
-                else:
-                    return Response({
-                        'success': False,
-                        'errors': query_serializer.errors
-                    }, status=status.HTTP_400_BAD_REQUEST)
+            # Fetch all hash, IP and domain join entries where the query_id matches the provided ID
+            hash_join_entries = ModelQueryHashJoin.objects.filter(query_id=query.pk)
+            domain_join_entries = ModelQueryDomainJoin.objects.filter(query_id=query.pk)
+            ip_join_entries = ModelQueryIPJoin.objects.filter(query_id=query.pk)
 
-                valid_hashes = []
-                
-                # Validate hashes
-                for hash in hashes:
-                    hash_serializer = SlhasherHashSerializer(data={
-                        'slhasher_hash': hash, 
-                        'vt_meta': '{}'
-                    })
-                    # Save the hash object but leave further processing for later
-                    if hash_serializer.is_valid():
-                        hash_obj = hash_serializer.save()
-                        valid_hashes.append(hash_obj)
-                    else:
-                        return Response({
-                            'success': False,
-                            'errors': hash_serializer.errors
-                        }, status=status.HTTP_400_BAD_REQUEST)
+            # Retrieve all hash, IP and domain objects using the id fields from the join entries
+            slasher_hashes = ModelSlasherHash.objects.filter(pk__in=[entry.hash_id for entry in hash_join_entries])
+            slasher_domains = ModelSlasherDomain.objects.filter(pk__in=[entry.domain_id for entry in domain_join_entries])
+            slasher_ips = ModelSlasherIP.objects.filter(pk__in=[entry.ip_id for entry in ip_join_entries])
 
-                # Create QueryHashJoin entries for valid hashes only
-                for hash_obj in valid_hashes:
-                    join_serializer = QueryHashJoinSerializer(data={
-                        'query_id': query.pk,
-                        'hash_id': hash_obj.pk
-                    })
-
-                    if join_serializer.is_valid():
-                        join_serializer.save()
-                    else:
-                        # Delete related hash entry and skip to next hash value
-                        hash_obj.delete()
-                        continue
-
-                # Perform VirusTotal asynchronusly on valid hashes only
-                threading.Thread(target=vt_proc_ha, args=(valid_hashes,)).start()
-
-                # Return immediate response, processing will be done in the background
-                return Response({
-                    'success': True,
-                    'data': {
-                        'id': query_serializer.data.get('id'),
-                        'query_date': query_serializer.data.get('query_date'),
-                        'query_case_name': query_serializer.data.get('query_case_name'),
-                        'query_analyst': query_serializer.data.get('query_analyst'),
-                        'query_status': query_serializer.data.get('query_status'),
-                    },
-                }, status=status.HTTP_201_CREATED)
-            
-            except Exception as e:
-                # If any exception occurs, return a 500 response
-                return Response({
-                    'success': False,
-                    'error': str(e)
-                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-class SlhasherQueryDetailView(APIView):
-    """
-    View to retrieve query details by query ID.
-    """
-
-    def get(self, request, query_id):
-        try:
-            query_obj = SlhasherQuery.objects.get(pk=query_id)
-            serializer = SlhasherQuerySerializer(query_obj)
-            return Response({
-                'success': True,
-                'data': serializer.data
-            })
-
-        except SlhasherQuery.DoesNotExist:
-            return Response({
-                'success': False,
-                'error': "Query not found"
-            }, status=status.HTTP_404_NOT_FOUND)
-
-        except ValueError:
-            return Response({
-                'success': False,
-                'error': 'Failed to retrieve query'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    def delete(self, request, query_id):
-        try:
-            # Ensure database operations are treated as a single transaction
-            # If part of the transaction failrs, all operations within the block are rolled back
-            with transaction.atomic():
-                # Delete both the Slhasher query and the corresponding joining table entries
-                query_obj = SlhasherQuery.objects.get(pk=query_id).delete()
-                QueryHashJoin.objects.filter(pk=query_id).delete()
-
-                return Response({'success': True}, status=status.HTTP_204_NO_CONTENT)
-
-        except SlhasherQuery.DoesNotExist:
-            return Response({
-                'success': False,
-                'error': "Query not found"
-            }, status=status.HTTP_404_NOT_FOUND)
-
-        except ValueError:
-            return Response({
-                'success': False,
-                'error': 'Failed to retrieve query'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-class QueryHashJoinView(APIView):
-    """
-    View to create a new query-hash join entry.
-    """
-
-    def get(self, request):
-        joins = QueryHashJoin.objects.all()
-        joins_serializer = QueryHashJoinSerializer(joins, many=True)
-        return Response({
-            'success': True,
-            'data': joins_serializer.data
-        })
-
-class QueryRelatedHashesView(APIView):
-    """
-    View to retrieve hashes related to a specific query ID.
-    """
-
-    def get(self, request, query_id):
-        try:
-            # Get query detailst for error handling
-            query_obj = SlhasherQuery.objects.get(pk=query_id)
-
-            # Get query joins where query_id equals the given id
-            join_entries = QueryHashJoin.objects.filter(query_id=query_id)
-
-            # Get all hash ids the previously collected join ids reference
-            slhasher_hash_ids = [entry.hash_id for entry in join_entries]
-
-            # Get all hash objects
-            slhasher_hashes = SlhasherHash.objects.filter(pk__in=slhasher_hash_ids)
-
-            # Serialize the hash objects into a JSON response using the SlhasherHashSerializer
-            serialized_hashes = SlhasherHashSerializer(slhasher_hashes, many=True)
+            # Serialize the list of hash, IP and domain objects into JSON format
+            serialized_hashes = SerializerSlasherHash(slasher_hashes, many=True)
+            serialized_domains = SerializerSlasherDomain(slasher_domains, many=True)
+            serialized_ips = SerializerSlasherIP(slasher_ips, many=True)
 
             # Manually format the serialized data
             formatted_hashes = []
             for hash_obj in serialized_hashes.data:
                 # Parse VT_meta
-                vt_meta = hash_obj.get('vt_meta', {})
+                vt_meta = hash_obj.get("vt_meta", {})
+                # Parse abstract syntax tree output from VirusTotal to use default JSON methods
                 vt_meta = ast.literal_eval(vt_meta)
 
-                # Helpers
-                vt_meta_attributes = vt_meta.get('data', {}).get('attributes', {})
-                vt_meta_last_analysis_stats = vt_meta.get('data', {}).get('attributes', {}).get('last_analysis_stats', {})
-            
-                formatted_hashes.append({
-                    'slhasher_hash_id': hash_obj.get('id'),
-                    'slhasher_hash': hash_obj.get('slhasher_hash'),
-                    'vt_status': hash_obj.get('vt_status'),
-                    'vt_detections': 
-                        int(
-                            vt_meta_last_analysis_stats.get('malicious', 0) + 
-                            vt_meta_last_analysis_stats.get('suspicious', 0)
-                        ),
-                    'vt_detections_vendors': 
-                        int(
-                            vt_meta_last_analysis_stats.get('malicious', 0) + 
-                            vt_meta_last_analysis_stats.get('suspicious', 0) + 
-                            vt_meta_last_analysis_stats.get('undetected', 0)
-                        ),
-                    'vt_meaningful_name': vt_meta_attributes.get('meaningful_name', ''),
-                    'vt_filenames': ' '.join(vt_meta_attributes.get('names', [])),
-                    'vt_md5': vt_meta_attributes.get('md5', ''),
-                    'vt_sha1': vt_meta_attributes.get('sha1', ''),
-                    'vt_sha256': vt_meta_attributes.get('sha256', ''),
-                    'vt_filesize': str(vt_meta_attributes.get('size', '')),
+                formatted_hashes.append(
+                    {
+                        "id": hash_obj.get("id"),
+                        "uuid": hash_obj.get("uuid"),
+                        "slasher_hash": hash_obj.get("slasher_hash"),
+                        "vt_status": hash_obj.get("vt_status"),
+                        "vt_meta": vt_meta,
+                    }
+                )
 
-                })
+            formatted_domains = []
+            for domain_obj in serialized_domains.data:
+                # Parse VT_meta
+                vt_meta = domain_obj.get("vt_meta", {})
+                # Parse abstract syntax tree output from VirusTotal to use default JSON methods
+                vt_meta = ast.literal_eval(vt_meta)
 
-            return Response({
-                'success': True,
-                'data': {
-                    'hashes': formatted_hashes
+                formatted_domains.append(
+                    {
+                        "id": domain_obj.get("id"),
+                        "uuid": domain_obj.get("uuid"),
+                        "slasher_domain": domain_obj.get("slasher_domain"),
+                        "vt_status": domain_obj.get("vt_status"),
+                        "vt_meta": vt_meta,
+                    }
+                )
+
+            formatted_ips = []
+            for ip_object in serialized_ips.data:
+                # Parse VT_meta
+                vt_meta = ip_object.get("vt_meta", {})
+                # Parse abstract syntax tree output from VirusTotal to use default JSON methods
+                vt_meta = ast.literal_eval(vt_meta)
+
+                formatted_ips.append(
+                    {
+                        "id": ip_object.get("id"),
+                        "uuid": ip_object.get("uuid"),
+                        "slasher_ip": ip_object.get("slasher_ip"),
+                        "vt_status": ip_object.get("vt_status"),
+                        "vt_meta": vt_meta,
+                    }
+                )
+
+            # Return a success response with the serialized data of related hashes.
+            return Response(
+                {
+                    "success": True,
+                    "data": {
+                        "query": query_serializer.data,
+                        "hashes": formatted_hashes,
+                        "domains": formatted_domains,
+                        "ips": formatted_ips,
+                    },
                 }
-            })
+            )
 
-        except SlhasherQuery.DoesNotExist:
-            return Response({
-                'success': False,
-                'error': "Query not found"
-            }, status=status.HTTP_404_NOT_FOUND)
+        queries = ModelSlasherQuery.objects.all()
+        serializer = SerializerSlasherQuery(queries, many=True)
+        return Response({"success": True, "data": serializer.data,}, status.HTTP_200_OK)
+
+    def post(self, request: Request):
+        """!
+        @brief Create a new Slasher query with associated IPs, domains, and hashes.
+
+        @param request: The HTTP request object containing query details.
+
+        @return Response: A JSON response indicating success or failure.
+        """
+
+        # Validate the whole envelope first
+        env_ser = SerializersQueryEnvelope(data=request.data)
+        env_ser.is_valid(raise_exception=True)
+        data = env_ser.validated_data
+
+        def validate_and_save_values(values, serializer_class, data_key):
+            """!
+            @brief Validate and save a list of values.
+
+            @param values: List of user-provided values.
+            @param serializer_class: Serializer class for validation.
+            @param data_key: Key to identify the value field in the serializer.
+
+            @return list: A list of valid saved objects.
+            """
+            valid_objects = []
+            for value in values:
+                serializer = serializer_class(data={data_key: value, "vt_meta": "{}"})
+                if serializer.is_valid():
+                    valid_objects.append(serializer.save())
+                # Invalid values are skipped silently
+
+            return valid_objects
+
+        def associate_values_with_query(
+            values, join_serializer_class, value_key, query
+        ):
+            """!
+            @brief Associate validated values with the query using join models.
+
+            @param values: List of valid objects to associate.
+            @param join_serializer_class: Serializer class for the join model.
+            @param value_key: Key for the related field in the join serializer.
+            @param query: The query object to associate with.
+
+            @return None
+            """
+            for value in values:
+                serializer = join_serializer_class(
+                    data={"query_id": query.pk, value_key: value.pk}
+                )
+                if serializer.is_valid():
+                    serializer.save()
+                else:
+                    # Rollback value association if join fails
+                    value.delete()
+
+        # Ensure atomicity of the entire operation
+        with transaction.atomic():
+            # Validate and save the query details like analyst, case name and date
+            q_ser = SerializerSlasherQuery(data=data["query"])
+            q_ser.is_valid(raise_exception=True)
+            query = q_ser.save()
+
+            # TODO: use_cached = q_ser.query_cached_values
+
+            # Extract and deduplicate data from the request
+            provided_ips = list(set(request.data.get("ips", [])))
+            provided_domains = list(set(request.data.get("domains", [])))
+            provided_hashes = list(set(request.data.get("hashes", [])))
+
+            # Validate and save IPs, Domains, and Hashes
+            valid_ips = validate_and_save_values(
+                provided_ips, SerializerSlasherIP, "slasher_ip"
+            )
+            valid_domains = validate_and_save_values(
+                provided_domains, SerializerSlasherDomain, "slasher_domain"
+            )
+            valid_hashes = validate_and_save_values(
+                provided_hashes, SerializerSlasherHash, "slasher_hash"
+            )
+
+            # Associate IPs, Domains, and Hashes with the query
+            associate_values_with_query(
+                valid_ips, SerializerQueryIPJoin, "ip_id", query
+            )
+            associate_values_with_query(
+                valid_domains, SerializerQueryDomainJoin, "domain_id", query
+            )
+            associate_values_with_query(
+                valid_hashes, SerializerQueryHashJoin, "hash_id", query
+            )
+
+            # Perform VirusTotal lookups asynchronusly on valid IOCs only
+            indicators = {
+                "ips": valid_ips,
+                "domains": valid_domains,
+                "hashes": valid_hashes
+            }
+            threading.Thread(target=enrich_indicators_with_vt, args=(query.pk, indicators)).start()
+
+            # Return success response with query details
+            return Response(
+                {
+                    "success": True,
+                    "data": {
+                        "query": {
+                            "id": query.pk,
+                            "uuid": query.uuid,
+                            "query_date": query.query_date,
+                            "query_case_name": query.query_case_name,
+                            "query_analyst": query.query_analyst,
+                            "query_status": query.query_status,
+                        }
+                        # TODO: "query_cached_values": query.query_cached_values,
+                    },
+                },
+                status=status.HTTP_201_CREATED,
+            )
+
+
+class ViewSlasherHashVTDownload(APIView):
+    """!
+    @brief API view to handle VirusTotal sample downloads.
+    """
+
+    def get(self, request: Request, uuid: str):
+        """!
+        @brief Return VirusTotal`s sample-download URL for a given hash.
+
+        @param request: Incoming HTTP request.
+        @param uuid: UUID of the ModelSlasherHash entry.
+
+        @return Response: JSON containing data on success, otherwise an exception handled by the global DRF exception handler.
+        """
+
+        # Make sure the hash exists
+        hash_obj = get_object_or_404(ModelSlasherHash, uuid=uuid)
         
-        except ValueError:
-            return Response({
-                'success': False,
-                'error': 'Failed to retrieve hashes'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        if hash_obj.vt_status != "completed":
+            raise exceptions.NotFound(
+                detail="No VirusTotal download URL available for this hash."
+            )
 
-class SlhasherHashVTDownload(APIView):
-    """
-    View to retrieve a file's download URL from VirusTotal
-    """
+        status_code, payload = fetch_vt_download_url(hash_obj.slasher_hash)
 
-    def get(self, request, hash_id):
-        try:
-            hash_obj = SlhasherHash.objects.get(pk=hash_id)
+        if status_code == 200:
+            return Response({"success": True, "data": payload})
 
-            # If VT status is not 'success' return a 404
-            if hash_obj.vt_status != 'success':
-                return Response({
-                    'success': False,
-                    'error': 'Failed to retrieve download URL'
-                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        if status_code == 401:
+            raise exceptions.PermissionDenied(detail=payload)
 
-            # Get download URL
-            # Use slhasher_hash value as input value
-            (vt_proc_df_status_code, vt_proc_df_payload) = vt_proc_df(hash_obj.slhasher_hash)
+        raise exceptions.APIException(detail=payload)
 
-            if vt_proc_df_status_code == 200:
-                return Response({
-                    'success': True,
-                    'data': vt_proc_df_payload
-                })
-            elif vt_proc_df_status_code == 401:
-                return Response({
-                    'success': False,
-                    'error': vt_proc_df_payload
-                }, status=status.HTTP_401_UNAUTHORIZED)
-
-            # Fallback error in case of any status code other than 200 or 401
-            return Response({
-                'success': False,
-                'error': vt_proc_df_payload
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-        except SlhasherHash.DoesNotExist:
-            return Response({
-                'success': False,
-                'error': "Hash not found"
-            }, status=status.HTTP_404_NOT_FOUND)
-
-        except ValueError:
-            return Response({
-                'success': False,
-                'error': 'Failed to retrieve download URL'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-class QueryRelatedHashesDownloadCSVView(APIView):
-    """
-    View to export hashes related to a specific query as a CSV file.
+class ViewSlasherQueryCSVExport(APIView):
+    """!
+    @brief Stream a CSV export of all indicators belonging to a query.
     """
 
-    def get(self, request, query_id):
-        try:
-            # Get query detailst for error handling
-            query_obj = SlhasherQuery.objects.get(pk=query_id)
+    # CSV advertised
+    renderer_classes = [CSVRenderer, JSONRenderer]
 
-            # Get query joins where query_id equals the given id
-            join_entries = QueryHashJoin.objects.filter(query_id=query_id)
+    def get(self, request: Request, uuid: str):
+        """!
+        @param uuid  UUID of the ``ModelSlasherQuery`` to export.
 
-            # Get all hash ids the previously collected join ids reference
-            slhasher_hash_ids = [entry.hash_id for entry in join_entries]
+        @return StreamingHttpResponse with ``text/csv`` attachment.
+        """
 
-            # Get all hash objects
-            slhasher_hashes = SlhasherHash.objects.filter(pk__in=slhasher_hash_ids)
+        # Attempt to retrieve the query object by its uuid
+        query = get_object_or_404(ModelSlasherQuery, uuid=uuid)
 
-            # Serialize the hash objects into a JSON response using the SlhasherHashSerializer
-            serialized_hashes = SlhasherHashSerializer(slhasher_hashes, many=True)
+        # Fetch all indicators
+        hash_ids = ModelQueryHashJoin.objects.filter(query_id=query.pk).values_list("hash_id", flat=True)
+        domain_ids = ModelQueryDomainJoin .objects.filter(query_id=query.pk).values_list("domain_id", flat=True)
+        ip_ids = ModelQueryIPJoin.objects.filter(query_id=query.pk).values_list("ip_id", flat=True)
 
-            # Create the HttpResponse object with CSV header
-            response = HttpResponse(content_type='text/csv')
-            response['Content-Disposition'] = f'attachment; filename="hashes_query_{query_id}.csv"'
+        hashes = ModelSlasherHash.objects.filter(pk__in=hash_ids)
+        domains = ModelSlasherDomain.objects.filter(pk__in=domain_ids)
+        ips = ModelSlasherIP.objects.filter(pk__in=ip_ids)
 
-            # Create a CSV writer object
-            writer = csv.writer(response)
+        if not (hashes.exists() or domains.exists() or ips.exists()):
+            raise exceptions.NotFound("Query contains no indicators to export.")
 
-            # Write CSV headers
-            writer.writerow(['Hash ID', 'Hash', 'VT Detection Rate', 'VT Meaningful Name'])
+        # Helper: compute “malicious + suspicious / total” from vt_meta
+        def _vt_rate(meta: str) -> str:
+            try:
+                meta_stats = ast.literal_eval(meta)["data"]["attributes"]["last_analysis_stats"]
+                detected = meta_stats.get("malicious", 0) + meta_stats.get("suspicious", 0)
+                total  = detected + meta_stats.get("undetected", 0) + meta_stats.get("harmless", 0)
+                return f"{detected}/{total}"
+            except Exception:
+                return "n/a"
 
-            # Write hash data to CSV
-            for hash_obj in serialized_hashes.data:
+        # Stream rows as we generate them (constant memory)
+        def _rows():
+            yield ("indicator", "type", "vt_rate")
+            for h in hashes:
+                yield (h.slasher_hash, "hash", _vt_rate(h.vt_meta))
+            for ip in ips:
+                yield (ip.slasher_ip, "ip", _vt_rate(ip.vt_meta))
+            for d in domains:
+                yield (d.slasher_domain, "domain", _vt_rate(d.vt_meta))
 
-                # Helpers
-                vt_meta = hash_obj.get('vt_meta', {})
-                vt_meta = ast.literal_eval(vt_meta)
+        class Echo:
+            """Minimal write-only buffer for csv.writer + StreamingHttpResponse."""
+            def write(self, value): return value
 
-                vt_meta_attributes = vt_meta.get('data', {}).get('attributes', {})
-                vt_meta_last_analysis_stats = vt_meta.get('data', {}).get('attributes', {}).get('last_analysis_stats', {})
+        writer   = csv.writer(Echo())
+        filename = f"slasher_query_{uuid}_{datetime.utcnow():%Y%m%dT%H%M%SZ}.csv"
 
-                writer.writerow([
-                    hash_obj.get('id'),
-                    hash_obj.get('slhasher_hash'),
-                    f'{int(vt_meta_last_analysis_stats.get("malicious", 0) + vt_meta_last_analysis_stats.get("suspicious", 0))} / {int(vt_meta_last_analysis_stats.get("malicious", 0) +  vt_meta_last_analysis_stats.get("suspicious", 0) + vt_meta_last_analysis_stats.get("undetected", 0) )}',
-                    vt_meta_attributes.get('meaningful_name', '')
-                ])
-
-            return response
-
-        except SlhasherQuery.DoesNotExist:
-            return Response({
-                'success': False,
-                'error': "Query not found"
-            }, status=status.HTTP_404_NOT_FOUND)
-        
-        except ValueError:
-            return Response({
-                'success': False,
-                'error': 'Failed to retrieve hashes for CSV export'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        response = StreamingHttpResponse(
+            (writer.writerow(row) for row in _rows()),
+            content_type="text/csv",
+        )
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        return response

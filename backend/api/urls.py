@@ -1,37 +1,36 @@
-from django.urls import path
+# api/urls.py
+from django.urls import re_path, path
+
 from .views import (
-    SlhasherHashView,
-    SlhasherHashDetailView,
-    SlhasherHashVTDownload,
-    SlhasherQueryView,
-    SlhasherQueryDetailView,
-    QueryHashJoinView,
-    QueryRelatedHashesView,
-    QueryRelatedHashesDownloadCSVView,
+    ViewSlasherQueries,
+    ViewSlasherHashVTDownload,
+    ViewSlasherQueryCSVExport,
 )
 
+UUID_REGEX = r"(?P<uuid>[0-9a-fA-F-]{36})"
+
 urlpatterns = [
-    # Endpoint to get all hashes or create a new hash
-    # path('hashes/', SlhasherHashView.as_view(), name='hashes'),
+    # List all queries - /queries/
+    re_path(r"^queries/?$", ViewSlasherQueries.as_view(), name="query-list"),
 
-    # Endpoint to retrieve hash details by hash value
-    # path('hashes/<str:hash_id>/', SlhasherHashDetailView.as_view(), name='hash-detail'),
+    # Single-query detail - /queries/<uuid>/
+    re_path(
+        rf"^queries/{UUID_REGEX}/?$",
+        ViewSlasherQueries.as_view(),
+        name="query-detail",
+    ),
 
-    # Endpoint to get a file's download URL
-    path('hashes/<str:hash_id>/vt-download/', SlhasherHashVTDownload.as_view(), name='hash-vt-download'),
+    # CSV export - /queries/<uuid>/export/csv/
+    re_path(
+        rf"^queries/{UUID_REGEX}/export/csv/?$",
+        ViewSlasherQueryCSVExport.as_view(),
+        name="query-export-csv",
+    ),
 
-    # Endpoint to get all queries or create a new query
-    path('queries/', SlhasherQueryView.as_view(), name='queries'),
-
-    # Endpoint to retrieve query details by query ID
-    path('queries/<str:query_id>/', SlhasherQueryDetailView.as_view(), name='query-detail'),
-
-    # Endpoint to create a new query-hash join
-    # path('query-hash-joins/', QueryHashJoinView.as_view(), name='query-hash-join-create'),
-
-    # Endpoint to retrieve related hashes for a specific query ID
-    path('queries/<str:query_id>/hashes/', QueryRelatedHashesView.as_view(), name='query-related-hashes'),
-
-    # Endpoint to download related hashes for a specific query ID as CSV
-    path('queries/<str:query_id>/hashes/download/', QueryRelatedHashesDownloadCSVView.as_view(), name='query-related-hashes'),
+    # VirusTotal download - /hashes/<uuid>/download/
+    re_path(
+        rf"^hashes/{UUID_REGEX}/download/?$",
+        ViewSlasherHashVTDownload.as_view(),
+        name="hash-download",
+    ),
 ]

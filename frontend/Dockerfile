@@ -2,15 +2,14 @@
 FROM    node:18-alpine AS build
 
 # Add a work directory
-WORKDIR /usr/src/slhasher/frontend
+WORKDIR /usr/src/slasher/frontend
 
 # Cache and Install dependencies
 COPY    package*.json ./
-COPY    yarn.lock .
 RUN     npm install
 
 # Copy all files
-COPY    . . 
+COPY    . .
 
 # Build application
 RUN     npm run build
@@ -19,7 +18,7 @@ RUN     npm run build
 FROM    nginx:alpine
 
 # Copy the build files from the previous stage
-COPY    --from=build /usr/src/slhasher/frontend/dist /usr/share/nginx/html
+COPY    --from=build /usr/src/slasher/frontend/dist /usr/share/nginx/html
 
 # Copy Nginx configuration
 COPY    nginx.conf /etc/nginx/conf.d/default.conf

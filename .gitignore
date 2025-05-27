@@ -1,52 +1,65 @@
-# Virtual environment
-env/
+###############################################################################
+#  GLOBAL
+###############################################################################
+# Editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.suo
+*.sw?
+*.ntvs*
+*.njsproj
+*.sln
 
-# Environment variables
-.env
-.env.dev
-
-# Python compiled files
-*.pyc
-__pycache__/
-
-# Database files
-*.sqlite3
-
-# Temporary files
-*.tmp
-*.bak
-*.swp
-
-# Development
-docker-compose.dev.yml
-Dockerfile.dev
-
-# Coverage results
-htmlcov/
-.coverage
-.coverage.*
-
-# Logs
-logs
+# Logs & lock-files
+logs/
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
+*.tmp
+*.bak
+*.swp
 
-node_modules
-dist
-dist-ssr
+###############################################################################
+#  PYTHON / DJANGO
+###############################################################################
+# Virtual-envs & compiled artefacts
+env/
+venv/
+__pycache__/
+*.py[cod]
+*.so
+*.sqlite3
+
+# Environment variables
+.env
+.env.*
+
+# Coverage
+htmlcov/
+.coverage*
+
+###############################################################################
+#  NODE / FRONTEND (Vite, React, Tailwind)
+###############################################################################
+node_modules/
+dist/
+dist-ssr/
 *.local
 
-# Editor directories and files
-.vscode/*
-!.vscode/extensions.json
-.idea
-.DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
+###############################################################################
+#  DOCKER / DEV OPS
+###############################################################################
+docker-compose.dev.yml
+Dockerfile.dev
+*.dev
+
+###############################################################################
+#  DOCS / TOOLING
+###############################################################################
+doxygen.config

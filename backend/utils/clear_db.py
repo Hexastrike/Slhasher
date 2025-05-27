@@ -1,8 +1,8 @@
 import utils_setup
-from api.models import SlhasherHash, SlhasherQuery, QueryHashJoin
+from api.models import SlasherHash, SlasherQuery, QueryHashJoin
 
-SlhasherHash.objects.all().delete()
-SlhasherQuery.objects.all().delete()
+SlasherHash.objects.all().delete()
+SlasherQuery.objects.all().delete()
 QueryHashJoin.objects.all().delete()
 
 print("DB cleared...")

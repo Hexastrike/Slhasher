@@ -6,7 +6,7 @@ from datetime import datetime
 from django.utils.crypto import get_random_string
 
 import utils_setup
-from api.models import SlhasherHash, SlhasherQuery, QueryHashJoin
+from api.models import SlasherHash, SlasherQuery, QueryHashJoin
 
 # Create 30 hashes and 5 queries
 # Attach 10 random hashes to each query
@@ -15,15 +15,15 @@ NUM_QUERIES = 5
 NUM_JOINS = 10
 
 def create_hashes(num_hashes=NUM_HASHES):
-    """Create and save a specified number of SlhasherHash entries with error handling."""
+    """Create and save a specified number of SlasherHash entries with error handling."""
     hashes = []
     for _ in range(num_hashes):
         hash_value = get_random_string(64, allowed_chars=string.ascii_lowercase + string.digits)
         vt_meta = f"Metadata for {hash_value}"
-        slhasher_hash = SlhasherHash(hash_sha256=hash_value, vt_meta=vt_meta)
+        slasher_hash = SlasherHash(hash_sha256=hash_value, vt_meta=vt_meta)
 
-        slhasher_hash.save()
-        hashes.append(slhasher_hash)
+        slasher_hash.save()
+        hashes.append(slasher_hash)
 
     return hashes
 
@@ -33,14 +33,14 @@ def create_queries(num_queries=NUM_QUERIES):
         query_analyst = f"Analyst {i + 1}"
         query_case_name = f"Case {i + 1}"
         query_date = datetime.now().date()
-        slhasher_query = SlhasherQuery(
+        slasher_query = SlasherQuery(
             query_analyst=query_analyst, 
             query_case_name=query_case_name, 
             query_date=query_date
         )
 
-        slhasher_query.save()
-        queries.append(slhasher_query)
+        slasher_query.save()
+        queries.append(slasher_query)
 
     return queries
 

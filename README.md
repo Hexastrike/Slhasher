@@ -1,63 +1,79 @@
-# Slhasher - Bulk VirusTotal Hash Lookups
+# Slasher - Bulk VirusTotal Hash Lookups
 
-Slhasher is a collaborative tool designed to perform bulk SHA256 hash lookups through a graphical user interface. It integrates with VirusTotal to fetch hash metadata and supports exporting results for easy sharing and analysis.
-
-## Demo
-
-https://github.com/user-attachments/assets/bdae680f-8260-4fdb-a562-cce9aeac4886
+Slasher is a bulk IOC checker. Paste hashes, IPs or domains, let Slasher query VirusTotal in parallel, watch progress live, then export results as a CSV file — all from a single web interface.
 
 ## Features
 
-- Perform bulk SHA256 hash lookups via VirusTotal
-- Download files directly from VirusTotal through Slhasher
-- Export hash lookup results as CSV files
+- **Bulk look-ups**: Drop in MD5 / SHA-1 / SHA-256, FQDNs or IP v4/v6; all are queried concurrently.
+- **Filter + search**: Text search, per-column filters and sorting help you find the needles fast.
+- **Risk colouring**: Badges turn green / amber / red based on how many VT engines flagged the indicator.
+- **One-click sample download**: If VT hosts the file you can fetch it straight from the table.
+- **CSV export**: One button, ready-to-share CSV (server-side stream, no browser freeze).
+- **Zero-friction setup**: `docker compose up --build`` brings up API & UI in one go.
 
-## Getting Started
+## Getting started
 
-To get started with Slhasher, follow the steps below:
+### Clone
 
-### 1. Set up your environment
+```bash
+git clone https://github.com/hexastrike/slasher.git
+cd slasher
+```
 
-- Copy the `template.env` file and rename it to `.env`:
+### Create `.env``
 
-    ```bash
-    cp template.env .env
-    ```
+```bash
+cp template.env .env
+```
 
-- Edit the `.env` file to configure the following variables:
+Generate a Django secret:
 
-    ```bash
-    # ...
-    SLHASHER_API_SECRET_KEY=<your-secret-key>
-    # ...
-    VIRUSTOTAL_API_KEY=<your-virustotal-api-key>
-    # ...
-    ```
+```python
+from django.core.management.utils import get_random_secret_key
+print(get_random_secret_key())
+```
 
-### 2. Build and start the application using Docker
+Edit `.env` and set at least:
 
-- Build the Docker images:
+```dotenv
+DJANGO_SECRET_KEY=<your-secret-key>
+VIRUSTOTAL_API_KEY=<your-virustotal-key>
+```
 
-    ```bash
-    docker-compose build
-    ```
+### Run
 
-- Start the application:
+```bash
+docker compose up --build # API on port 8000, UI on port 3000 by default
+```
 
-    ```bash
-    docker-compose up
-    ```
+Navigate to http://127.0.0.1:3000.
 
-### 3. Access the application
+## Demo
 
-- Open your web browser and navigate to `http://127.0.0.1:3000` to start using Slhasher.
+### Add indicators
 
-## To-Do List
+![Add indicators](/assets/hx_slasher_query_indicators.png)
 
-- [ ] Option to use cached hash values instead of querying VirusTotal for each lookup
-- [ ] Filter and search functionalities to improve result navigation
-- [ ] Additional export file formats (e.g., JSON, XML)
-- [ ] Parsing and displaying all VirusTotal result fields
-- [ ] Support for creating exports for selected hash values only
-- [ ] Integration with HybridAnalysis as additional or alternative hash analysis
-- [ ] Support for MD5 and SHA1 hash values
+### Add metadata
+
+![Add metadata](/assets/hx_slasher_query_metadata.png)
+
+### Review querie details
+
+![Review query details](/assets/hx_slasher_query_review.png)
+
+### Hash results
+
+![Hash results](/assets/hx_slasher_query_results.png)
+
+### IP / Domain results
+
+![IP / Domain results](/assets/hx_slasher_query_results_2.png)
+
+## Roadmap
+
+- [ ] XLSX export
+- [ ] Use cached VirusTotal results
+- [ ] Export / copy only selected rows
+- [ ] Additional enrichment sources (Abuse-IPDB, URLhaus, Hybrid-Analysis …)
+- [ ] Authentication
