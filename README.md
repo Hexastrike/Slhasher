@@ -1,4 +1,4 @@
-# Slasher - Bulk VirusTotal Hash Lookups
+# Slasher - Bulk VirusTotal Indicator Lookups
 
 Slasher is a bulk IOC checker. Paste hashes, IPs or domains, let Slasher query VirusTotal in parallel, watch progress live, then export results as a CSV file — all from a single web interface.
 
